@@ -323,6 +323,12 @@ namespace ERPAPI.Controllers
         {
             try
             {
+                var dispatched = await _context.Dispatch.Where(di => di.ProjectId == dispatch.ProjectId && di.LotNo == dispatch.LotNo).FirstOrDefaultAsync();
+                if (dispatched != null)
+                {
+                  _context.Dispatch.Remove(dispatched);
+                    await _context.SaveChangesAsync();
+                }
                 _context.Dispatch.Add(dispatch);
                 await _context.SaveChangesAsync();
 

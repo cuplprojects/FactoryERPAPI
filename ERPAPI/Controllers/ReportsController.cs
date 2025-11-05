@@ -1002,21 +1002,17 @@ namespace ERPAPI.Controllers
 
 
 
-        [HttpGet("process-wise/{catchNo}")]
-        public async Task<IActionResult> GetProcessWiseData(string catchNo)
+        [HttpGet("process-wise/{projectId}/{catchNo}")]
+        public async Task<IActionResult> GetProcessWiseData(int projectId, string catchNo)
         {
-            // Get the ProjectId of the entered CatchNo from the QuantitySheet table
             var quantitySheet = await _context.QuantitySheets
-                .Where(q => q.CatchNo == catchNo)
+                .Where(q => q.ProjectId == projectId && q.CatchNo == catchNo)
                 .Select(q => new { q.QuantitySheetId, q.ProcessId, q.ProjectId })
                 .FirstOrDefaultAsync();
 
             if (quantitySheet == null)
-            {
-                return NotFound("No data found for the given CatchNo.");
-            }
+                return NotFound("No data found for the given ProjectId and CatchNo.");
 
-            // Get the sequence of the ProjectId from the ProjectProcess table
             var projectProcesses = await _context.ProjectProcesses
                 .Where(pp => pp.ProjectId == quantitySheet.ProjectId)
                 .OrderBy(pp => pp.Sequence)
@@ -1026,83 +1022,82 @@ namespace ERPAPI.Controllers
                 .Where(t => t.QuantitysheetId == quantitySheet.QuantitySheetId)
                 .ToListAsync();
 
+            var transactionIds = transactions.Select(t => t.TransactionId).ToList();
+
             var eventLogs = await _context.EventLogs
-                .Where(e => transactions.Select(t => t.TransactionId).Contains(e.TransactionId.Value) && e.Event == "Status updated")
+                .Where(e => transactionIds.Contains(e.TransactionId.Value) && e.Event == "Status updated")
                 .Select(e => new { e.TransactionId, e.LoggedAT, e.EventTriggeredBy })
                 .ToListAsync();
 
             var supervisorLogs = await _context.EventLogs
-        .Where(e => transactions.Select(t => t.TransactionId).Contains(e.TransactionId.Value))
-        .GroupBy(e => e.TransactionId)
-        .Select(g => new
-        {
-            TransactionId = g.Key,
-            EventTriggeredBy = g.Select(e => e.EventTriggeredBy).FirstOrDefault()
-        })
-        .ToListAsync();
+                .Where(e => transactionIds.Contains(e.TransactionId.Value))
+                .GroupBy(e => e.TransactionId)
+                .Select(g => new
+                {
+                    TransactionId = g.Key,
+                    EventTriggeredBy = g.Select(e => e.EventTriggeredBy).FirstOrDefault()
+                })
+                .ToListAsync();
 
-            var users = await _context.Users.ToListAsync();
+            var users = await _context.Users
+                .Select(u => new { u.UserId, FullName = u.FirstName + " " + u.LastName })
+                .ToListAsync();
+
+            var zones = await _context.Zone
+                .Select(z => new { z.ZoneId, z.ZoneNo })
+                .ToListAsync();
+
+            var machines = await _context.Machine
+                .Select(m => new { m.MachineId, m.MachineName })
+                .ToListAsync();
+
+            // Convert to dictionaries for quick lookup (O(1))
+            var zoneMap = zones.ToDictionary(z => z.ZoneId, z => z.ZoneNo);
+            var machineMap = machines.ToDictionary(m => m.MachineId, m => m.MachineName);
+            var userMap = users.ToDictionary(u => u.UserId, u => u.FullName);
+            var supervisorMap = supervisorLogs.ToDictionary(s => s.TransactionId, s => s.EventTriggeredBy);
 
             var filteredProjectProcesses = projectProcesses
-    .Where(pp => transactions.Any(t => t.ProcessId == pp.ProcessId))
-    .OrderBy(pp => pp.Sequence)
-    .ToList();
+                .Where(pp => transactions.Any(t => t.ProcessId == pp.ProcessId))
+                .OrderBy(pp => pp.Sequence)
+                .ToList();
 
             var processWiseData = filteredProjectProcesses
-    .OrderBy(pp => pp.Sequence) // Ensure ordering before transformation
-    .Select(pp => new
-    {
-        ProcessId = pp.ProcessId,
-        Transactions = transactions
-            .Where(t => t.ProcessId == pp.ProcessId)
-            .Select(t => new
-            {
-                TransactionId = t.TransactionId,
-                ZoneName = _context.Zone
-                    .Where(z => z.ZoneId == t.ZoneId)
-                    .Select(z => z.ZoneNo)
-                    .FirstOrDefault(),
-                TeamMembers = _context.Users
-                    .Where(u => t.TeamId.Contains(u.UserId))
-                    .Select(u => new { FullName = u.FirstName + " " + u.LastName })
-                    .ToList(),
-                /*Supervisor = _context.Users
-                    .Where(user => pp.UserId.Contains(user.UserId) && user.RoleId == 5)
-                    .Select(u => new { FullName = u.FirstName + " " + u.LastName })
-                    .ToList(),
-                t.Status,*/
-                Supervisor = users
-                        .Where(u => u.UserId == supervisorLogs
-                            .Where(s => s.TransactionId == t.TransactionId)
-                            .Select(s => s.EventTriggeredBy)
-                            .FirstOrDefault())
-                        .Select(u => u.FirstName + " " + u.LastName)
-                        .FirstOrDefault(),
-                MachineName = _context.Machine
-                    .Where(m => m.MachineId == t.MachineId)
-                    .Select(m => m.MachineName)
-                    .FirstOrDefault(),
-                StartTime = eventLogs
-                    .Where(e => e.TransactionId == t.TransactionId)
-                    .OrderBy(e => e.LoggedAT)
-                    .Select(e => (DateTime?)e.LoggedAT)
-                    .FirstOrDefault(),
-                EndTime = eventLogs
-                    .Where(e => e.TransactionId == t.TransactionId)
-                    .OrderByDescending(e => e.LoggedAT)
-                    .Select(e => (DateTime?)e.LoggedAT)
-                    .FirstOrDefault(),
-
-            }).ToList()
-
-
-    })
-    .ToList(); // Convert to List to maintain order
+                .Select(pp => new
+                {
+                    ProcessId = pp.ProcessId,
+                    Transactions = transactions
+                        .Where(t => t.ProcessId == pp.ProcessId)
+                        .Select(t => new
+                        {
+                            TransactionId = t.TransactionId,
+                            ZoneName = zoneMap.TryGetValue(t.ZoneId, out var zoneName) ? zoneName : null,
+                            TeamMembers = users
+                                .Where(u => t.TeamId.Contains(u.UserId))
+                                .Select(u => new { u.FullName })
+                                .ToList(),
+                            Supervisor = supervisorMap.TryGetValue(t.TransactionId, out var supervisorId)
+                                && userMap.TryGetValue(supervisorId, out var supervisorName)
+                                ? supervisorName
+                                : null,
+                            MachineName = machineMap.TryGetValue(t.MachineId, out var machineName) ? machineName : null,
+                            StartTime = eventLogs
+                                .Where(e => e.TransactionId == t.TransactionId)
+                                .OrderBy(e => e.LoggedAT)
+                                .Select(e => (DateTime?)e.LoggedAT)
+                                .FirstOrDefault(),
+                            EndTime = eventLogs
+                                .Where(e => e.TransactionId == t.TransactionId)
+                                .OrderByDescending(e => e.LoggedAT)
+                                .Select(e => (DateTime?)e.LoggedAT)
+                                .FirstOrDefault()
+                        })
+                        .ToList()
+                })
+                .ToList();
 
             return Ok(processWiseData);
         }
-
-
         [HttpGet("DailyProductionReport")]
         public async Task<IActionResult> GetDailyProductionReport(string? date = null, string? startDate = null, string? endDate = null)
         {
