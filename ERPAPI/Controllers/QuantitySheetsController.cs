@@ -487,7 +487,7 @@ public class QuantitySheetController : ControllerBase
             .Select(t => t.Types)
             .FirstOrDefaultAsync();
 
-        // Adjust for "Booklet" type project if necessary
+        // --- 📘 Handle Booklet Projects ---
         if (projectType == "Booklet" && project.NoOfSeries.HasValue)
         {
             var noOfSeries = project.NoOfSeries.Value;
@@ -508,11 +508,11 @@ public class QuantitySheetController : ControllerBase
                         OuterEnvelope = sheet.OuterEnvelope,
                         LotNo = sheet.LotNo,
                         Quantity = adjustedQuantity,
-                        PercentageCatch = 0, // Will be recalculated later
+                        PercentageCatch = 0,
                         ProjectId = sheet.ProjectId,
                         ExamDate = sheet.ExamDate,
                         ExamTime = sheet.ExamTime,
-                        ProcessId = new List<int>(), // Empty list for new catch
+                        ProcessId = new List<int>(),
                         StopCatch = 0,
                         Pages = sheet.Pages,
                     };
@@ -520,16 +520,20 @@ public class QuantitySheetController : ControllerBase
                 }
             }
 
-            newSheets = adjustedSheets; // Replace with adjusted sheets
+            newSheets = adjustedSheets;
         }
 
-        // Get existing sheets for the same projectId
+        // --- 🗂 Fetch existing data for the project ---
         var existingSheets = await _context.QuantitySheets
             .Where(s => s.ProjectId == projectId)
             .ToListAsync();
-        var newCatchNos = newSheets.Select(s => s.CatchNo).Distinct().ToList();
+
+        // --- ✅ Safe lot-wise deletion logic ---
+        var uploadedLotNos = newSheets.Select(s => s.LotNo).Distinct().ToList();
+
         var sheetsToDelete = existingSheets
-            .Where(s => !newCatchNos.Contains(s.CatchNo))
+            .Where(s => uploadedLotNos.Contains(s.LotNo) &&
+                        !newSheets.Any(ns => ns.CatchNo == s.CatchNo && ns.LotNo == s.LotNo))
             .ToList();
 
         if (sheetsToDelete.Any())
@@ -537,28 +541,31 @@ public class QuantitySheetController : ControllerBase
             Console.WriteLine($"Deleting {sheetsToDelete.Count} outdated sheets for ProjectId {projectId}");
             _context.QuantitySheets.RemoveRange(sheetsToDelete);
         }
-        // Prepare a list to track new sheets that need to be processed
+
+        // --- ⚙️ Process new sheets ---
         var processedNewSheets = new List<QuantitySheet>();
 
         foreach (var sheet in newSheets)
         {
-            // For new sheets, clear the ProcessId and process it
             sheet.ProcessId.Clear();
             _processService.ProcessCatch(sheet);
             processedNewSheets.Add(sheet);
-            Console.WriteLine(sheet);
+            Console.WriteLine($"Processed CatchNo {sheet.CatchNo}, LotNo {sheet.LotNo}");
         }
 
-        // Now handle inserting or updating the QuantitySheets based on ProjectId
+        // --- 🔁 Insert or update sheets ---
         foreach (var newSheet in processedNewSheets)
         {
             var existingSheet = existingSheets
-                .FirstOrDefault(s => s.CatchNo == newSheet.CatchNo && s.LotNo == newSheet.LotNo && s.ProjectId == newSheet.ProjectId && s.StopCatch == 0);
+                .FirstOrDefault(s =>
+                    s.CatchNo == newSheet.CatchNo &&
+                    s.LotNo == newSheet.LotNo &&
+                    s.ProjectId == newSheet.ProjectId &&
+                    s.StopCatch == 0);
 
             if (existingSheet != null)
             {
-                // Update the existing sheet
-                existingSheet.CatchNo = newSheet.CatchNo;
+                // Update
                 existingSheet.Paper = newSheet.Paper;
                 existingSheet.Course = newSheet.Course;
                 existingSheet.Subject = newSheet.Subject;
@@ -574,15 +581,17 @@ public class QuantitySheetController : ControllerBase
             }
             else
             {
-                // If no existing sheet found, add it to the context for insertion
+                // Insert
                 _context.QuantitySheets.Add(newSheet);
-                Console.WriteLine($"Adding new sheet with CatchNo {newSheet.CatchNo}, ProjectId {newSheet.ProjectId}");
+                Console.WriteLine($"Adding new sheet with CatchNo {newSheet.CatchNo}, LotNo {newSheet.LotNo}, ProjectId {newSheet.ProjectId}");
             }
         }
 
-        // Recalculate the percentages and save
+        // --- 📊 Recalculate percentage catch lot-wise ---
         var allSheets = existingSheets.Concat(processedNewSheets).ToList();
-        var groupedSheets = allSheets.GroupBy(sheet => sheet.LotNo);
+        var groupedSheets = allSheets
+            .Where(s => uploadedLotNos.Contains(s.LotNo)) // Only recalc for uploaded lots
+            .GroupBy(sheet => sheet.LotNo);
 
         foreach (var group in groupedSheets)
         {
@@ -593,7 +602,6 @@ public class QuantitySheetController : ControllerBase
                 return BadRequest($"Total quantity for lot {group.Key} is zero, cannot calculate percentages.");
             }
 
-            // Calculate percentage catch for each sheet in the current group
             foreach (var sheet in group)
             {
                 sheet.PercentageCatch = (sheet.Quantity / totalQuantityForLot) * 100;

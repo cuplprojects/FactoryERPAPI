@@ -1735,7 +1735,7 @@ public async Task<IActionResult> GetUnderProduction()
     var today = DateTime.Today;
 
     var getProject = await _context.Projects
-        .Where(p => p.ProjectId >= 88)
+        .Where(p => p.ProjectId >= 112)
         .Select(p => new { p.ProjectId, p.Name, p.GroupId, p.TypeId })
         .ToListAsync();
 
@@ -1799,7 +1799,8 @@ public async Task<IActionResult> GetUnderProduction()
             FromDate = x.GroupData.FromDate,
             ToDate = x.GroupData.ToDate,
             TotalCatchNo = x.GroupData.TotalCatchNo,
-            TotalQuantity = x.GroupData.TotalQuantity
+            TotalQuantity = x.GroupData.TotalQuantity,
+            DispatchDate = x.Dispatch?.DispatchDate?.ToString("dd-MM-yyyy") ?? "Dispatch Not Created"
         })
         .ToList();
 
