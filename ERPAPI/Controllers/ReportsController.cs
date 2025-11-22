@@ -4,6 +4,8 @@ using ERPAPI.Model;
 using ERPAPI.Data;
 using ERPGenericFunctions.Model;
 using System.Globalization;
+using Microsoft.CodeAnalysis;
+using Microsoft.Build.Evaluation;
 
 namespace ERPAPI.Controllers
 {
@@ -84,7 +86,7 @@ namespace ERPAPI.Controllers
             try
             {
                 // Query the database for projects with the given GroupId
-                var projects = await _context.Set<Project>()
+                var projects = await _context.Projects
                     .Where(p => p.GroupId == groupId)
                     .Select(p => new { p.ProjectId, p.Name })
                     .ToListAsync();
@@ -1668,144 +1670,294 @@ namespace ERPAPI.Controllers
         }
 
 
-        //[HttpGet("UnderProduction")]
-        //public async Task<IActionResult> GetUnderProduction()
-        //{
-        //    // Step 1: Fetch all required data from the database
-        //    var getProject = await _context.Projects
-        //        .Where(p => p.ProjectId >= 100)
-        //        .Select(p => new { p.ProjectId, p.Name, p.GroupId, p.TypeId })
-        //        .ToListAsync();
 
-        //    var getdistinctlotsofproject = await _context.QuantitySheets
-        //        .Where(q => q.Status == 1)
-        //        .Select(q => new { q.LotNo, q.ProjectId, q.ExamDate, q.QuantitySheetId, q.Quantity })
-        //        .Distinct()
-        //        .ToListAsync();
-
-
-
-        //    var getdispatchedlots = await _context.Dispatch
-        //        .Select(d => new { d.LotNo, d.ProjectId })
-        //        .ToListAsync();
-        //    var dispatchedLotKeys = new HashSet<string>(
-        //        getdispatchedlots.Select(d => $"{d.ProjectId}|{d.LotNo}")
-        //    );
-
-        //    var quantitySheetGroups = getdistinctlotsofproject
-        //        .GroupBy(q => new { q.LotNo, q.ProjectId })
-        //        .ToDictionary(
-        //            g => $"{g.Key.ProjectId}|{g.Key.LotNo}",
-        //            g => new {
-        //                TotalCatchNo = g.Select(q => q.QuantitySheetId).Count(),
-        //                TotalQuantity = g.Sum(q => q.Quantity),
-        //                FromDate = g.Min(q => DateTime.TryParse(q.ExamDate, out var d) ? d : DateTime.MinValue),
-        //                ToDate = g.Max(q => DateTime.TryParse(q.ExamDate, out var d) ? d : DateTime.MinValue)
-        //            }
-        //              );
-
-
-
-        //    // Step 3: Perform joins and calculate result in-memory
-        //    var underProduction = (from project in getProject
-        //                           from kvp in quantitySheetGroups
-        //                           let keyParts = kvp.Key.Split(new[] { '|' }, StringSplitOptions.None)
-        //                           let projectId = int.Parse(keyParts[0])
-        //                           let lotNo = keyParts[1]
-        //                           where project.ProjectId == projectId && !dispatchedLotKeys.Contains(kvp.Key)
-        //                           select new
-        //                           {
-        //                               project.ProjectId,
-        //                               project.Name,
-        //                               project.GroupId,
-        //                               FromDate = kvp.Value.FromDate,
-        //                               ToDate = kvp.Value.ToDate,
-        //                               project.TypeId,
-        //                               LotNo = lotNo,
-        //                               TotalCatchNo = kvp.Value.TotalCatchNo,
-        //                               TotalQuantity = kvp.Value.TotalQuantity
-        //                           }).ToList();
-
-        //    return Ok(underProduction);
-        //}
-
-      [HttpGet("UnderProduction")]
-public async Task<IActionResult> GetUnderProduction()
-{
-    var today = DateTime.Today;
-
-    var getProject = await _context.Projects
-        .Where(p => p.ProjectId >= 112)
-        .Select(p => new { p.ProjectId, p.Name, p.GroupId, p.TypeId })
-        .ToListAsync();
-
-    var getdistinctlotsofproject = await _context.QuantitySheets
-        .Where(q => q.Status == 1)
-        .Select(q => new { q.LotNo, q.ProjectId, q.ExamDate, q.QuantitySheetId, q.Quantity })
-        .ToListAsync();
-
-    var getdispatchedlots = await _context.Dispatch
-        .Select(d => new { d.ProjectId, d.LotNo, d.Status, d.DispatchDate })
-        .ToListAsync();
-
-    var dispatchedDict = getdispatchedlots
-        .ToDictionary(d => $"{d.ProjectId}|{d.LotNo}", d => d);
-
-    var quantitySheetGroups = getdistinctlotsofproject
-        .GroupBy(q => new { q.ProjectId, q.LotNo })
-        .ToDictionary(
-            g => $"{g.Key.ProjectId}|{g.Key.LotNo}",
-            g => new
-            {
-                TotalCatchNo = g.Count(),
-                TotalQuantity = g.Sum(q => q.Quantity),
-                FromDate = g.Min(q => DateTime.TryParse(q.ExamDate, out var d) ? d : DateTime.MinValue),
-                ToDate = g.Max(q => DateTime.TryParse(q.ExamDate, out var d) ? d : DateTime.MinValue)
-            });
-
-    var underProduction = quantitySheetGroups
-        .Select(kvp =>
+        [HttpGet("UnderProduction")]
+        public async Task<IActionResult> GetUnderProduction()
         {
-            var keyParts = kvp.Key.Split('|');
-            var projectId = int.Parse(keyParts[0]);
-            var lotNo = keyParts[1];
-            var dispatchKey = $"{projectId}|{lotNo}";
-            dispatchedDict.TryGetValue(dispatchKey, out var dispatch);
+            var today = DateTime.Today;
 
-            return new
+            var getProject = await _context.Projects
+                .Where(p => p.ProjectId >= 112)
+                .Select(p => new { p.ProjectId, p.Name, p.GroupId, p.TypeId })
+                .ToListAsync();
+
+            var getdistinctlotsofproject = await _context.QuantitySheets
+                .Where(q => q.Status == 1)
+                .Select(q => new { q.LotNo, q.ProjectId, q.ExamDate, q.QuantitySheetId, q.Quantity })
+                .ToListAsync();
+
+            var getdispatchedlots = await _context.Dispatch
+                .Select(d => new { d.ProjectId, d.LotNo, d.Status, d.DispatchDate })
+                .ToListAsync();
+
+            var dispatchedDict = getdispatchedlots
+                .ToDictionary(d => $"{d.ProjectId}|{d.LotNo}", d => d);
+
+            var quantitySheetGroups = getdistinctlotsofproject
+                .GroupBy(q => new { q.ProjectId, q.LotNo })
+                .ToDictionary(
+                    g => $"{g.Key.ProjectId}|{g.Key.LotNo}",
+                    g => new
+                    {
+                        TotalCatchNo = g.Count(),
+                        TotalQuantity = g.Sum(q => q.Quantity),
+                        FromDate = g.Min(q => DateTime.TryParse(q.ExamDate, out var d) ? d : DateTime.MinValue),
+                        ToDate = g.Max(q => DateTime.TryParse(q.ExamDate, out var d) ? d : DateTime.MinValue)
+                    });
+
+            var underProduction = quantitySheetGroups
+                .Select(kvp =>
+                {
+                    var keyParts = kvp.Key.Split('|');
+                    var projectId = int.Parse(keyParts[0]);
+                    var lotNo = keyParts[1];
+                    dispatchedDict.TryGetValue(kvp.Key, out var dispatch);
+
+                    return new
+                    {
+                        Project = getProject.FirstOrDefault(p => p.ProjectId == projectId),
+                        LotNo = lotNo,
+                        Dispatch = dispatch,
+                        GroupData = kvp.Value
+                    };
+                })
+                .Where(x =>
+                    x.Project != null &&
+                    (
+                        x.Dispatch == null ||
+                        (!x.Dispatch.Status && x.Dispatch.DispatchDate.HasValue)
+                    )
+                )
+                .Select(x => new
+                {
+                    x.Project.ProjectId,
+                    x.Project.Name,
+                    x.Project.GroupId,
+                    x.Project.TypeId,
+                    LotNo = x.LotNo,
+                    FromDate = x.GroupData.FromDate,
+                    ToDate = x.GroupData.ToDate,
+                    TotalCatchNo = x.GroupData.TotalCatchNo,
+                    TotalQuantity = x.GroupData.TotalQuantity,
+                    DispatchDate = x.Dispatch?.DispatchDate?.ToString("dd-MM-yyyy") ?? "Dispatch Not Created"
+                })
+                .ToList();
+
+
+            // FINAL RESULT
+            var finalResult = new List<object>();
+
+
+            // 🔥 LOOP PER UNDERPRODUCTION ROW (PROJECT + LOT)
+            foreach (var item in underProduction)
             {
-                Project = getProject.FirstOrDefault(p => p.ProjectId == projectId),
-                LotNo = lotNo,
-                Dispatch = dispatch,
-                GroupData = kvp.Value
-            };
-        })
-        .Where(x =>
-            x.Project != null &&
-            (
-                x.Dispatch == null || // no dispatch
-                (!x.Dispatch.Status &&  // status = 0 (pending)
-                 x.Dispatch.DispatchDate.HasValue
-                 ) // dispatch date in future
-            )
-        )
-        .Select(x => new
-        {
-            x.Project.ProjectId,
-            x.Project.Name,
-            x.Project.GroupId,
-            x.Project.TypeId,
-            LotNo = x.LotNo,
-            FromDate = x.GroupData.FromDate,
-            ToDate = x.GroupData.ToDate,
-            TotalCatchNo = x.GroupData.TotalCatchNo,
-            TotalQuantity = x.GroupData.TotalQuantity,
-            DispatchDate = x.Dispatch?.DispatchDate?.ToString("dd-MM-yyyy") ?? "Dispatch Not Created"
-        })
-        .ToList();
+                int projectId = item.ProjectId;
+                string lotNo = item.LotNo;
 
-    return Ok(underProduction);
-}
+                // Load data only for this project
+                var projectProcesses = await _context.ProjectProcesses
+                    .Where(p => p.ProjectId == projectId)
+                    .ToListAsync();
+
+                var quantitySheets = await _context.QuantitySheets
+                    .Where(p => p.ProjectId == projectId && p.StopCatch == 0 && p.LotNo == lotNo)
+                    .ToListAsync();
+
+                var transactions = await _context.Transaction
+                    .Where(t => t.ProjectId == projectId && t.LotNo.ToString() == lotNo)
+                    .ToListAsync();
+
+                var dispatches = await _context.Dispatch
+                    .Where(d => d.ProjectId == projectId && d.LotNo == lotNo)
+                    .ToListAsync();
+                var processes = await _context.Processes.ToListAsync();
+
+                // LOT-BASED CALCULATIONS
+                var lots = new Dictionary<string, Dictionary<int, dynamic>>();
+                var totalLotPercentages = new Dictionary<string, double>();
+                var lotQuantities = new Dictionary<string, double>();
+                var lotWeightages = new Dictionary<string, double>();
+                var projectLotPercentages = new Dictionary<string, double>();
+                var lotProcessWeightageSum = new Dictionary<string, Dictionary<int, double>>();
+                double projectTotalQuantity = 0;
+
+                foreach (var quantitySheet in quantitySheets)
+                {
+                    var processIdWeightage = new Dictionary<int, double>();
+                    double totalWeightageSum = 0;
+
+                    foreach (var processId in quantitySheet.ProcessId)
+                    {
+                        var process = projectProcesses.FirstOrDefault(p => p.ProcessId == processId);
+                        if (process != null)
+                        {
+                            processIdWeightage[processId] = Math.Round(process.Weightage, 2);
+
+                            if (quantitySheet.ProcessId.Contains(processId))
+                            {
+                                totalWeightageSum += process.Weightage;
+                            }
+                        }
+                    }
+
+                    if (totalWeightageSum < 100)
+                    {
+                        double deficit = 100 - totalWeightageSum;
+                        double adjustment = deficit / processIdWeightage.Count;
+
+                        foreach (var key in processIdWeightage.Keys.ToList())
+                        {
+                            processIdWeightage[key] = Math.Round(processIdWeightage[key] + adjustment, 2);
+                        }
+
+                        totalWeightageSum = processIdWeightage.Values.Sum();
+                    }
+
+                    double completedWeightageSum = 0;
+                    foreach (var kvp in processIdWeightage)
+                    {
+                        var processId = kvp.Key;
+                        var weightage = kvp.Value;
+
+                        var completedProcess = transactions
+                            .Any(t => t.QuantitysheetId == quantitySheet.QuantitySheetId
+                                      && t.ProcessId == processId
+                                      && t.Status == 2);
+
+                        if (completedProcess)
+                        {
+                            completedWeightageSum += weightage;
+                        }
+                    }
+
+                    double lotPercentage = Math.Round(quantitySheet.PercentageCatch * (completedWeightageSum / 100), 2);
+                    var lotNumber = quantitySheet.LotNo;
+
+                    if (!lots.ContainsKey(lotNumber))
+                    {
+                        lots[lotNumber] = new Dictionary<int, dynamic>();
+                        totalLotPercentages[lotNumber] = 0;
+                        lotQuantities[lotNumber] = 0;
+                    }
+
+                    lots[lotNumber][quantitySheet.QuantitySheetId] = new
+                    {
+                        CompletedProcessPercentage = Math.Round(completedWeightageSum, 2),
+                        LotPercentage = lotPercentage,
+                        ProcessDetails = processIdWeightage
+                    };
+
+                    totalLotPercentages[lotNumber] = Math.Round(totalLotPercentages[lotNumber] + lotPercentage, 2);
+                    lotQuantities[lotNumber] += quantitySheet.Quantity;
+                    projectTotalQuantity += quantitySheet.Quantity;
+
+                    if (!lotProcessWeightageSum.ContainsKey(lotNumber))
+                    {
+                        lotProcessWeightageSum[lotNumber] = new Dictionary<int, double>();
+                    }
+
+                    foreach (var processId in processIdWeightage.Keys)
+                    {
+                        var lotNumberStr = lotNumber.ToString();
+
+                        // Filter transactions and quantity sheets for the current processId
+                        var filteredTransactions = transactions
+                            .Where(t => t.LotNo.ToString() == lotNumberStr && t.ProcessId == processId && t.Status == 2 && t.ProjectId == projectId);
+
+                        var filteredQuantitySheets = quantitySheets
+                            .Where(qs => qs.LotNo.ToString() == lotNumberStr && qs.ProcessId.Contains(processId) && qs.ProjectId == projectId);
+
+
+                        var completedQuantitySheets = filteredTransactions.Count(); //2
+                        Console.WriteLine(processId + "completed " + completedQuantitySheets);
+
+                        var totalQuantitySheets = filteredQuantitySheets.Count(); //57
+
+
+                        // Calculate the percentage completion for the processId
+                        double processPercentage = totalQuantitySheets > 0
+                            ? Math.Round((double)completedQuantitySheets / totalQuantitySheets * 100, 2)
+                            : 0;
+
+                        lotProcessWeightageSum[lotNumber][processId] = processPercentage;
+
+                        // Check Dispatch table for ProcessId 14 and Status 1
+                        if (processId == 14)
+                        {
+                            var dispatch = dispatches.FirstOrDefault(d => d.LotNo == lotNumber && d.ProcessId == 14 && d.Status);
+                            if (dispatch != null && dispatch.Status)
+                            {
+                                lotProcessWeightageSum[lotNumber][processId] = 100;
+                            }
+                        }
+                    }
+
+                }
+                // Adjust totalLotPercentages if ProcessId 14 is completed
+
+                foreach (var lotNumber in totalLotPercentages.Keys.ToList())
+                {
+                    var process14Completed = lotProcessWeightageSum[lotNumber].ContainsKey(14) &&
+                                             lotProcessWeightageSum[lotNumber][14] == 100;
+                    if (process14Completed)
+                    {
+                        totalLotPercentages[lotNumber] = 100; // Override to 100% if ProcessId 14 is completed
+                    }
+                }
+
+                foreach (var lot in lotQuantities)
+                {
+                    var lotNumber = lot.Key;
+                    var quantity = lot.Value;
+
+                    lotWeightages[lotNumber] = Math.Round((quantity / projectTotalQuantity) * 100, 2);
+                    projectLotPercentages[lotNumber] = Math.Round(totalLotPercentages[lotNumber] * lotWeightages[lotNumber] / 100, 2);
+                }
+
+                double totalProjectLotPercentage = Math.Round(projectLotPercentages.Values.Sum(), 2);
+                projectTotalQuantity = Math.Round(projectTotalQuantity, 2);
+                var processPercentagesByName = new Dictionary<string, Dictionary<string, double>>();
+
+                foreach (var lotEntry in lotProcessWeightageSum)
+                {
+                    string lotNumber = lotEntry.Key;
+                    processPercentagesByName[lotNumber] = new Dictionary<string, double>();
+
+                    foreach (var proc in lotEntry.Value)
+                    {
+                        int processId = proc.Key;
+                        double percentage = proc.Value;
+                        if (percentage == 100)
+                            continue;
+                        string processName = processes.FirstOrDefault(p => p.Id == processId)?.Name
+                                             ?? $"Process_{processId}";
+
+                        processPercentagesByName[lotNumber][processName] = percentage;
+                    }
+                }
+                // ADD TO FINAL LIST
+                finalResult.Add(new
+                {
+                    item.ProjectId,
+                    item.Name,
+                    item.GroupId,
+                    item.TypeId,
+                    item.LotNo,
+                    item.FromDate,
+                    item.ToDate,
+                    item.TotalCatchNo,
+                    item.TotalQuantity,
+                    item.DispatchDate,
+                    TotalLotPercentage = totalLotPercentages,
+                    ProjectLotPercentage = projectLotPercentages,
+                    ProcessPercentages = lotProcessWeightageSum,
+                    ProcessPercentagesByName = processPercentagesByName,
+                });
+            }
+
+
+            return Ok(finalResult);
+        }
 
     }
 }

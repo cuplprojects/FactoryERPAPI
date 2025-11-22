@@ -1573,7 +1573,7 @@ namespace ERPAPI.Controllers
                 {
                     // For other processes, set the previous process based on sequence
                     previousProcess = finalizedProcessCounts.FirstOrDefault(p =>
-              processSequence.FirstOrDefault(seq => seq.ProcessId == p.ProcessId)?.Sequence == currentProcess.RangeStart);
+                   processSequence.FirstOrDefault(seq => seq.ProcessId == p.ProcessId)?.Sequence == currentProcess.RangeStart);
 
                 }
 

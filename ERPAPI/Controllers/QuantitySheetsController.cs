@@ -539,10 +539,6 @@ public class QuantitySheetController : ControllerBase
         return NoContent();
     }
 
-
-
-
-
     [HttpPut]
     public async Task<IActionResult> UpdateQuantitySheet([FromBody] List<QuantitySheet> newSheets)
     {
@@ -915,8 +911,6 @@ public class QuantitySheetController : ControllerBase
 
         return await _context.QuantitySheets.Where(r => r.ProjectId == ProjectId && r.StopCatch == 0).ToListAsync();
     }
-
-
 
     [HttpGet("check-all-quantity-sheets")]
     public async Task<ActionResult<IEnumerable<object>>> GetAllProjectsQuantitySheetStatus()
