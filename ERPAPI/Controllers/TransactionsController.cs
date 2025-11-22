@@ -78,7 +78,7 @@ namespace ERPAPI.Controllers
                         t.VoiceRecording,
                         t.Status,
                         t.MachineId,
-                        AlarmMessage = alarm != null ? alarm.Message : null // Handle null case for alarms
+                        AlarmMessage = alarm != null ? alarm.Message : t.AlarmId // Handle null case for alarms
                     };
                 }).ToList(); // Apply the transformation in memory
 
@@ -162,7 +162,7 @@ namespace ERPAPI.Controllers
                     VoiceRecording = t.VoiceRecording,
                     Status = t.Status,
                     MachineId = t.MachineId,
-                    AlarmMessage = alarm != null ? alarm.Message : null, // Handle null case for alarms
+                    AlarmMessage = alarm != null ? alarm.Message : t.AlarmId, // Handle null case for alarms
                     
                 };
             }).ToList();

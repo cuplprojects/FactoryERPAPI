@@ -156,7 +156,7 @@ public class QuantitySheetController : ControllerBase
         {
             return NotFound("QuantitySheet not found.");
         }
-
+        var oldQuantity = existingSheet.Quantity;
         // Update the fields with the new values
         existingSheet.Paper = updatedSheet.Paper;
         existingSheet.Course = updatedSheet.Course;
@@ -167,6 +167,16 @@ public class QuantitySheetController : ControllerBase
         existingSheet.OuterEnvelope = updatedSheet.OuterEnvelope;
         existingSheet.Quantity = updatedSheet.Quantity;
 
+        if (oldQuantity!= updatedSheet.Quantity)
+        { 
+          var  getTransaction = await _context.Transaction.Where(q=>q.QuantitysheetId== existingSheet.QuantitySheetId && (q.ProcessId !=15 || q.ProcessId!=1) && q.Status==2).ToListAsync();
+            foreach (var item in getTransaction) 
+            { 
+                item.InterimQuantity = Convert.ToInt32(oldQuantity);
+                item.Status = 1;
+                item.AlarmId = "Quantity Increased";
+            }
+        }
         // Save the changes to the database
         try
         {
@@ -179,7 +189,7 @@ public class QuantitySheetController : ControllerBase
                 "QuantitySheet",
                 1, // Replace with actual user ID or triggered by value
                 null,
-                $"QuantitySheetId: {id}"
+                $"Updated QuantitySheetId {id}, OldQuantity = {oldQuantity}, NewQuantity = {updatedSheet.Quantity}"
             );
 
             return Ok(existingSheet);
@@ -197,6 +207,76 @@ public class QuantitySheetController : ControllerBase
     }
 
 
+    [HttpPost("MergeCatch")]
+
+    public async Task<IActionResult> MergeCatch([FromBody] MergeCatchRequest request)
+    {
+        var items = await _context.QuantitySheets.Where(q=>request.CatchNos.Contains(q.CatchNo) && q.ProjectId == request.ProjectId).ToListAsync();
+
+        if (!items.Any())
+            return NotFound("No matching records found.");
+        int bookletSeries = (int)(await _context.Projects
+         .Where(p => p.ProjectId == request.ProjectId)
+         .Select(p => p.NoOfSeries)
+         .FirstOrDefaultAsync() ?? 1);
+        // 2. Get all QuantitySheetIds of those catch numbers
+        var allIds = items.Select(x => x.QuantitySheetId).ToList();
+        string mergedCatchNo = string.Join(request.Delimiter, items.Select(x => x.CatchNo).Distinct());
+
+        // 3. Sum their Quantity
+        double totalQuantity = items.Sum(x => x.Quantity);
+        double totalPercentage = items.Sum(x=>x.PercentageCatch);
+        // 4. Choose the first record to keep
+        var recordToKeep = items.First();
+        var transaction = await _context.Transaction.Where(q=>allIds.Contains(q.QuantitysheetId)).ToListAsync();
+        _context.Transaction.RemoveRange(transaction);
+        foreach (var item in items)
+        {
+            item.StopCatch = 1; // <-- ensure this field exists
+        }
+        await _context.SaveChangesAsync();
+        int repeatCount = bookletSeries > 0 ? bookletSeries : 1;
+        // 6. Delete all other records
+        for (int i = 0; i < repeatCount; i++)
+        {
+            var newRecord = new QuantitySheet
+            {
+                ProjectId = request.ProjectId,
+                CatchNo = mergedCatchNo,
+                Quantity = totalQuantity/repeatCount,
+                Course = recordToKeep.Course,
+                Subject = recordToKeep.Subject,
+                StopCatch = 0,        // Active merged record
+                ExamDate = recordToKeep.ExamDate,
+                ExamTime = recordToKeep.ExamTime,
+                Pages = recordToKeep.Pages,
+                PercentageCatch = totalPercentage / repeatCount,
+                LotNo = recordToKeep.LotNo,
+                ProcessId = recordToKeep.ProcessId,
+                Status = recordToKeep.Status,
+                Paper = recordToKeep.Paper,
+                InnerEnvelope = request.InnerEnvelope,
+                OuterEnvelope = request.OuterEnvelope,
+            };
+
+            await _context.QuantitySheets.AddAsync(newRecord);
+        }
+        // 7. Save changes
+        await _context.SaveChangesAsync();
+
+
+        return Ok("Merged successfully");
+
+    }
+
+    public class MergeCatchRequest
+    {
+        public int ProjectId { get; set; }
+        public List<string> CatchNos { get; set; }
+        public int? OuterEnvelope { get; set; }
+        public string? InnerEnvelope { get; set; }
+        public string Delimiter { get; set; }
+    }
 
 
     [HttpPost("ReleaseForProduction")]
